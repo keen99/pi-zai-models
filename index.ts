@@ -85,16 +85,7 @@ export default function zaiModelsExtension(pi: ExtensionAPI) {
         maxTokens: 131072,
         compat: ZAI_COMPAT_TOOL_STREAM,
       },
-      {
-        id: "glm-5v-turbo",
-        name: "GLM-5V-Turbo",
-        reasoning: true,
-        input: ["text", "image"],
-        cost: ZERO_COST,
-        contextWindow: 200000,
-        maxTokens: 131072,
-        compat: ZAI_COMPAT_TOOL_STREAM,
-      },
+      // glm-5v-turbo omitted: not in Coding Plan (429 "does not yet include access").
       {
         id: "glm-5.2",
         name: "GLM-5.2",

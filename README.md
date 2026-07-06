@@ -31,12 +31,15 @@ endpoint (`https://api.z.ai/api/coding/paas/v4`):
 | `glm-4.7`     | 204,800    | 131,072    | text         | streaming tool calls        |
 | `glm-5-turbo` | 200,000    | 131,072    | text         | streaming tool calls        |
 | `glm-5.1`     | 200,000    | 131,072    | text         | streaming tool calls        |
-| `glm-5v-turbo`| 200,000    | 131,072    | text, image  | vision, streaming tool calls|
 | `glm-5.2`     | 1,000,000  | 131,072    | text         | flagship, streaming tool calls |
 
 All set `reasoning: true`, Z.AI `thinkingFormat`, zero cost (Coding Plan is
 subscription-billed, not metered). 4.7+ enable `zaiToolStream` for streaming
 tool-call deltas.
+
+`glm-5v-turbo` (vision) is **not** in the Coding Plan — returns
+`429 "does not yet include access"` — so it's omitted. If you have a separate
+metered API key and want it, add it back.
 
 ## Context window vs max output
 
