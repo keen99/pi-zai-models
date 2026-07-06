@@ -1,0 +1,35 @@
+{
+  "name": "pi-zai-models",
+  "version": "1.0.0",
+  "description": "pi extension: register Z.AI (zai) provider models with correct context/maxTokens, including glm-5.2 (1M/128K) that upstream pi-ai omits.",
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "zai",
+    "glm",
+    "glm-5.2",
+    "models",
+    "context-window",
+    "provider"
+  ],
+  "license": "MIT",
+  "author": "David Raistrick",
+  "homepage": "https://github.com/keen99/pi-zai-models",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/keen99/pi-zai-models.git"
+  },
+  "type": "module",
+  "main": "./index.ts",
+  "scripts": {
+    "clean": "echo 'nothing to clean'",
+    "build": "echo 'nothing to build'",
+    "check": "echo 'nothing to check'"
+  },
+  "pi": {
+    "extensions": ["./index.ts"]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  }
+}
