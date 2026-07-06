@@ -42,6 +42,7 @@ const ZERO_COST = {
 export default function zaiModelsExtension(pi: ExtensionAPI) {
   pi.registerProvider("zai", {
     baseUrl: BASE_URL,
+    apiKey: "ZAI_API_KEY",
     api: "openai-completions",
     models: [
       {
