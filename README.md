@@ -52,10 +52,34 @@ Z.AI docs use `glm-5.2[1m]` as the opt-in 1M identifier for coding agents. pi
 sends `model.id` directly to the API, so this extension uses the official
 `glm-5.2[1m]` id rather than a local-only alias like `glm-5.2-1m`.
 
-Plain `glm-5.2` is intentionally capped to **272K** in pi. Reason: legacy
-Coding Plan throttling appears token-sensitive, and pi's model-switch / overflow
-recovery can fail when switching from a 1M context model to 272K `gpt-5.5`. Use
-`glm-5.2[1m]` only when you intentionally want 1M context.
+Plain `glm-5.2` is intentionally capped to **272K** in pi. Reason: Coding Plan
+usage is prompt/quota based, but Z.AI says each prompt is estimated to invoke the
+model 15–20 times and actual usage varies by project complexity, repository size,
+and auto-accept. Legacy plans also described usage in token-consumption terms, so
+long 1M contexts can burn hidden quota faster than the plain prompt count
+suggests. pi's model-switch / overflow recovery can also fail when switching from
+a 1M context model to 272K `gpt-5.5`. Use `glm-5.2[1m]` only when you
+intentionally want 1M context.
+
+## Coding Plan usage / quota notes
+
+Current Z.AI docs: <https://docs.z.ai/devpack/overview#usage-instruction>
+
+- One prompt = one query.
+- Each prompt is estimated to invoke the model 15–20 times.
+- 5-hour and weekly limits are estimates; actual usage varies with project
+  complexity, repository size, and auto-accept.
+- Current caps: Lite ~80/5hr + ~400/week, Pro ~400/5hr + ~2,000/week, Max
+  ~1,600/5hr + ~8,000/week.
+- GLM-5.2 and GLM-5-Turbo consume 3× quota during peak, 2× off-peak; off-peak
+  1× promo runs through end of September.
+
+Legacy reference (archived 2026-01-06):
+<https://web.archive.org/web/20260106170952/https://z.ai/subscribe>
+
+- Legacy 5-hour estimates were higher: Lite ~120, Pro ~600, Max ~2,400.
+- Legacy copy also described token consumption: each prompt typically allowed
+  15–20 model calls and monthly allowance was “tens of billions of tokens.”
 
 ## Context window vs max output
 
