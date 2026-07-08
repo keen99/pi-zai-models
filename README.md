@@ -7,9 +7,13 @@ upstream `pi-ai` does not ship.
 ## Why
 
 Z.AI released GLM-5.2 on 2026-06-13 with a solid **1M-token context** and
-**128K max output**. Weeks later, `@earendil-works/pi-ai` (the model registry
-`pi` ships with) still has no `glm-5.2` entry at all, and some GLM-5.x limits
-are stale. `pi` is slow to adopt new Z.AI models.
+**128K max output**. The 1M path is opt-in as `glm-5.2[1m]`. Plain
+`glm-5.2` is kept as a safer 272K model aligned with pi's `gpt-5.5` context so
+model switching and compaction recovery do not cross 1M→272K boundaries.
+
+Weeks later, `@earendil-works/pi-ai` (the model registry `pi` ships with) still
+has no `glm-5.2` entry at all, and some GLM-5.x limits are stale. `pi` is slow
+to adopt new Z.AI models.
 
 If your `settings.json` points `defaultModel` at `glm-5.2` but the registry
 has no entry, the model resolver has nothing to work with — wrong or missing
@@ -31,7 +35,8 @@ endpoint (`https://api.z.ai/api/coding/paas/v4`):
 | `glm-4.7`     | 204,800    | 131,072    | text         | streaming tool calls        |
 | `glm-5-turbo` | 200,000    | 131,072    | text         | streaming tool calls        |
 | `glm-5.1`     | 200,000    | 131,072    | text         | streaming tool calls        |
-| `glm-5.2`     | 1,000,000  | 131,072    | text         | flagship, streaming tool calls |
+| `glm-5.2`     | 272,000    | 131,072    | text         | safe default, gpt-5.5-aligned, streaming tool calls |
+| `glm-5.2[1m]` | 1,000,000  | 131,072    | text         | opt-in 1M context, streaming tool calls |
 
 All set `reasoning: true`, Z.AI `thinkingFormat`, zero cost (Coding Plan is
 subscription-billed, not metered). 4.7+ enable `zaiToolStream` for streaming
@@ -41,12 +46,24 @@ tool-call deltas.
 `429 "does not yet include access"` — so it's omitted. If you have a separate
 metered API key and want it, add it back.
 
+## GLM-5.2 default vs 1M
+
+Z.AI docs use `glm-5.2[1m]` as the opt-in 1M identifier for coding agents. pi
+sends `model.id` directly to the API, so this extension uses the official
+`glm-5.2[1m]` id rather than a local-only alias like `glm-5.2-1m`.
+
+Plain `glm-5.2` is intentionally capped to **272K** in pi. Reason: legacy
+Coding Plan throttling appears token-sensitive, and pi's model-switch / overflow
+recovery can fail when switching from a 1M context model to 272K `gpt-5.5`. Use
+`glm-5.2[1m]` only when you intentionally want 1M context.
+
 ## Context window vs max output
 
 Two separate limits, easy to confuse:
 
 - **Context window** (`contextWindow`) = max tokens the model accepts as
-  **input** (prompt + history). GLM-5.2: 1,000,000.
+  **input** (prompt + history). `glm-5.2`: 272,000 safe default;
+  `glm-5.2[1m]`: 1,000,000 opt-in.
 - **Max output** (`maxTokens`) = max tokens the model can **generate** in one
   response. GLM-5.2: 131,072 (~128K).
 
@@ -87,17 +104,26 @@ After install + restart:
 pi --list-models | grep glm-5.2
 ```
 
-Should show `zai / glm-5.2`. Inside pi, `/context` reflects the 1M window and
-128K max output.
+Should show `zai / glm-5.2` and `zai / glm-5.2[1m]`. Inside pi, `/context`
+reflects 272K for plain `glm-5.2` and 1M for `glm-5.2[1m]`.
 
 ## Defaults
 
-Make GLM-5.2 the default in `settings.json`:
+Safe default in `settings.json`:
 
 ```json
 {
   "defaultProvider": "zai",
   "defaultModel": "glm-5.2"
+}
+```
+
+Opt into 1M only when needed:
+
+```json
+{
+  "defaultProvider": "zai",
+  "defaultModel": "glm-5.2[1m]"
 }
 ```
 
