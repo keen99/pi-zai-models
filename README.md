@@ -1,72 +1,85 @@
 # pi-zai-models
 
-pi extension that registers Z.AI (`zai`) provider models with correct
-**context window** and **max output tokens**, including **GLM-5.2** which
-upstream `pi-ai` does not ship.
+pi extension that dynamically registers Z.AI (`zai`) provider models with
+correct **context window**, **max output tokens**, and **API pricing** ---
+including **GLM-5.2** which upstream `pi-ai` does not ship.
 
 ## Why
 
 Z.AI released GLM-5.2 on 2026-06-13 with a solid **1M-token context** and
-**128K max output**. The 1M path is opt-in as `glm-5.2[1m]`. Plain
-`glm-5.2` is kept as a safer 272K model aligned with pi's `gpt-5.5` context so
-model switching and compaction recovery do not cross 1M→272K boundaries.
+**128K max output**. Weeks later, `@earendil-works/pi-ai` (the model registry
+`pi` ships with) still has no `glm-5.2` entry at all, and some GLM-5.x limits
+are stale. `pi` is slow to adopt new Z.AI models.
 
-Weeks later, `@earendil-works/pi-ai` (the model registry `pi` ships with) still
-has no `glm-5.2` entry at all, and some GLM-5.x limits are stale. `pi` is slow
-to adopt new Z.AI models.
-
-If your `settings.json` points `defaultModel` at `glm-5.2` but the registry
-has no entry, the model resolver has nothing to work with — wrong or missing
-limits, and no real model object.
-
-This extension fixes that by calling `pi.registerProvider("zai", { models })`
-with a maintained, correct model list. `registerProvider` with `models`
-**replaces** the provider's entire model list, so this file is the single
-source of truth for the `zai` provider on your pi installs.
+This extension fixes that by fetching the live model list and limits from
+Z.AI's own docs, then calling `pi.registerProvider("zai", { models })`.
+`registerProvider` with `models` **replaces** the provider's entire model list,
+so this file is the single source of truth for the `zai` provider on your pi
+installs.
 
 ## What it does
 
-On load, registers these models under the `zai` provider, all on the coding
-endpoint (`https://api.z.ai/api/coding/paas/v4`):
+On load:
 
-| Model         | Context    | Max Output | Input        | Notes                       |
-|---------------|------------|------------|--------------|-----------------------------|
-| `glm-4.5-air` | 131,072    | 98,304     | text         | lightweight fallback        |
-| `glm-4.7`     | 204,800    | 131,072    | text         | streaming tool calls        |
-| `glm-5-turbo` | 200,000    | 131,072    | text         | streaming tool calls        |
-| `glm-5.1`     | 200,000    | 131,072    | text         | streaming tool calls        |
-| `glm-5.2`     | 272,000    | 131,072    | text         | safe default, gpt-5.5-aligned, streaming tool calls |
-| `glm-5.2[1m]` | 1,000,000  | 131,072    | text         | opt-in 1M context, streaming tool calls |
+1. **Fetches** the Z.AI pricing page (`docs.z.ai/guides/overview/pricing.md`)
+   --- model IDs + per-1M-token prices. No auth needed.
+2. **Fetches** each model's doc page (`docs.z.ai/guides/llm/<id>.md`) ---
+   context window + max output tokens.
+3. **Parses** both, filters to coding-plan text models (drops ocr/32b/X
+   variants, and `glm-5v-turbo` which 429s), and registers two providers.
 
-All set `reasoning: true`, Z.AI `thinkingFormat`, zero cost (Coding Plan is
-subscription-billed, not metered). 4.7+ enable `zaiToolStream` for streaming
-tool-call deltas.
+All models use the coding endpoint
+(`https://api.z.ai/api/coding/paas/v4`), Z.AI `thinkingFormat`, and
+`zaiToolStream` (streaming tool-call deltas) for 4.7+ models. Costs are
+populated with real API metered prices so pi's per-turn cost tracking shows
+equivalent value (Coding Plan is subscription-billed, not metered).
 
-`glm-5v-turbo` (vision) is **not** in the Coding Plan — returns
-`429 "does not yet include access"` — so it's omitted. If you have a separate
-metered API key and want it, add it back.
+### Two providers
 
-## GLM-5.2 default vs 1M
+1M-capable models (context > 272K) get registered in **both** providers:
 
-Z.AI docs use `glm-5.2[1m]` as the opt-in 1M identifier for coding agents. pi
-sends `model.id` directly to the API, so this extension uses the official
-`glm-5.2[1m]` id rather than a local-only alias like `glm-5.2-1m`.
+| Provider  | Models              | Context for 1M-capable | Purpose |
+|-----------|---------------------|------------------------|---------|
+| `zai`     | all coding models   | capped to 272K  | default --- model-switch friendly |
+| `zai-1m`  | 1M-capable only     | full 1M                | opt-in for long-context work |
 
-Plain `glm-5.2` is intentionally capped to **272K** in pi. Reason: Coding Plan
-usage is prompt/quota based, but Z.AI says each prompt is estimated to invoke the
-model 15–20 times and actual usage varies by project complexity, repository size,
-and auto-accept. Legacy plans also described usage in token-consumption terms, so
-long 1M contexts can burn hidden quota faster than the plain prompt count
-suggests. pi's model-switch / overflow recovery can also fail when switching from
-a 1M context model to 272K `gpt-5.5`. Use `glm-5.2[1m]` only when you
+Both send the real Z.AI model id (e.g. `glm-5.2`) to the API. The `[1m]`
+suffix is a Claude Code client-side convention only --- Z.AI rejects it on both
+OpenAI and Anthropic endpoints, so this extension uses a separate provider
+instead of a suffix alias.
+
+**Why 272K safe default?** Aligned with pi's `gpt-5.5` context window.
+Prevents context overflow when switching models or during compaction recovery
+(pi cannot safely compact 1M → 272K with a smaller context model). Use `zai-1m/glm-5.2` only when you
 intentionally want 1M context.
+
+## Caching
+
+Fetched data is cached to avoid redundant HTTP on every pi spawn (subagents,
+chained agents, etc.):
+
+```
+~/.cache/pi-zai-models/
+  pricing.json          # model id → {input, output, cacheRead} per 1M
+  enriched-models.json  # model id → {context, max} from doc parse
+```
+
+- **Cold start** (no cache): blocking 3s fetch, write cache, register.
+- **Warm start** (cache exists): register instantly from cache.
+- **Refresh**: background fetch fires **only if cache older than 1 hour**.
+  If fetch succeeds → overwrite cache + re-register. If it fails → keep cache.
+- **Force refresh**: `rm -rf ~/.cache/pi-zai-models` (next spawn = cold start).
+- **Fallback**: if both fetch and cache fail on cold start, a hardcoded
+  `CURATED` table registers a minimal model set so the provider is never empty.
+
+Cache location honors `$XDG_CACHE_HOME`.
 
 ## Coding Plan usage / quota notes
 
 Current Z.AI docs: <https://docs.z.ai/devpack/overview#usage-instruction>
 
 - One prompt = one query.
-- Each prompt is estimated to invoke the model 15–20 times.
+- Each prompt is estimated to invoke the model 15--20 times.
 - 5-hour and weekly limits are estimates; actual usage varies with project
   complexity, repository size, and auto-accept.
 - Current caps: Lite ~80/5hr + ~400/week, Pro ~400/5hr + ~2,000/week, Max
@@ -79,17 +92,16 @@ Legacy reference (archived 2026-01-06):
 
 - Legacy 5-hour estimates were higher: Lite ~120, Pro ~600, Max ~2,400.
 - Legacy copy also described token consumption: each prompt typically allowed
-  15–20 model calls and monthly allowance was “tens of billions of tokens.”
+  15--20 model calls and monthly allowance was "tens of billions of tokens."
 
 ## Context window vs max output
 
 Two separate limits, easy to confuse:
 
 - **Context window** (`contextWindow`) = max tokens the model accepts as
-  **input** (prompt + history). `glm-5.2`: 272,000 safe default;
-  `glm-5.2[1m]`: 1,000,000 opt-in.
+  **input** (prompt + history).
 - **Max output** (`maxTokens`) = max tokens the model can **generate** in one
-  response. GLM-5.2: 131,072 (~128K).
+  response.
 
 pi uses both: context window drives auto-compaction and `/context` display;
 max output caps the generation length sent to the API.
@@ -114,10 +126,10 @@ pi install
 
 `pi install` pulls the git repo into `~/.pi/agent/git/github.com/keen99/`,
 resolves `package.json`, and loads the extension declared under `pi.extensions`.
-Updates propagate the same way — re-run `pi install` after upstream changes,
+Updates propagate the same way --- re-run `pi install` after upstream changes,
 or use `pi-pkg-autoreload` for auto sync.
 
-Requires `ZAI_API_KEY` in env (or `auth.json`) — auth is unchanged by this
+Requires `ZAI_API_KEY` in env (or `auth.json`) --- auth is unchanged by this
 extension.
 
 ## Verify
@@ -125,11 +137,11 @@ extension.
 After install + restart:
 
 ```
-pi --list-models | grep glm-5.2
+pi --list-models | grep zai
 ```
 
-Should show `zai / glm-5.2` and `zai / glm-5.2[1m]`. Inside pi, `/context`
-reflects 272K for plain `glm-5.2` and 1M for `glm-5.2[1m]`.
+Should show all coding-plan models under `zai`, plus 1M-capable models under
+`zai-1m`. Real API calls should work for every listed model.
 
 ## Defaults
 
@@ -146,26 +158,26 @@ Opt into 1M only when needed:
 
 ```json
 {
-  "defaultProvider": "zai",
-  "defaultModel": "glm-5.2[1m]"
+  "defaultProvider": "zai-1m",
+  "defaultModel": "glm-5.2"
 }
 ```
 
 ## Maintenance
 
-Limits come from official Z.AI docs:
+Limits and pricing come from official Z.AI docs, fetched live:
 
-- GLM-5.2: <https://docs.z.ai/guides/llm/glm-5.2>
-- GLM-5.1: <https://docs.z.ai/guides/llm/glm-5.1>
+- Pricing: <https://docs.z.ai/guides/overview/pricing.md>
+- Per-model limits: <https://docs.z.ai/guides/llm/<model-id>>
 
-When Z.AI ships a new model, add a block to `index.ts`. When upstream `pi-ai`
-finally adds `glm-5.2`, this extension still wins (later registration
-overrides), so nothing breaks — you can uninstall it once upstream catches up.
+When Z.AI ships a new model, it appears automatically once it hits the pricing
+page (no code change needed). The hardcoded `CURATED` table in `index.ts` is
+only a cold-start fallback --- update it if a model lacks a doc page with
+parseable limits.
 
-## Config
-
-None. Model list is hardcoded in `index.ts`. Edit + push to change across all
-your pi installs.
+When upstream `pi-ai` finally adds `glm-5.2`, this extension still wins (later
+registration overrides), so nothing breaks --- you can uninstall it once upstream
+catches up.
 
 ## Compatibility
 
