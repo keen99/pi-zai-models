@@ -72,17 +72,19 @@ const ZAI_COMPAT_TOOL_STREAM: ZaiCompat = {
   zaiToolStream: true,
 };
 
-// GLM-5.3 changed Z.AI's request format. pi's "deepseek" compatibility mode
-// emits exactly the required thinking object plus reasoning_effort. Unsupported
-// pi levels are hidden; switching from "off" clamps upward to low.
-const GLM_53_COMPAT: ZaiCompat = {
+// GLM-5.3 changed Z.AI's request format. Z.AI currently aliases Coding Plan
+// requests for GLM-5.1/5.2 to 5.3, so those IDs need the same workaround.
+// pi's "deepseek" compatibility mode emits exactly the required thinking
+// object plus reasoning_effort. Unsupported pi levels are hidden; switching
+// from "off" clamps upward to low.
+const REQUIRED_EFFORT_COMPAT: ZaiCompat = {
   supportsDeveloperRole: false,
   supportsReasoningEffort: true,
   thinkingFormat: "deepseek",
   zaiToolStream: true,
 };
 
-const GLM_53_THINKING_LEVELS: ThinkingLevelMap = {
+const REQUIRED_EFFORT_THINKING_LEVELS: ThinkingLevelMap = {
   off: null,
   minimal: null,
   low: "low",
@@ -112,8 +114,9 @@ const CURATED: Record<string, CuratedModel> = {
   "glm-4.7": { context: 204800, max: 131072, toolStream: true },
   "glm-5": { context: 200000, max: 131072, toolStream: true },
   "glm-5-turbo": { context: 200000, max: 131072, toolStream: true },
-  "glm-5.1": { context: 200000, max: 131072, toolStream: true },
-  "glm-5.2": { context: 1000000, max: 131072, toolStream: true },
+  // Temporary: Coding Plan currently returns model=glm-5.3 for both IDs.
+  "glm-5.1": { context: 200000, max: 131072, toolStream: true, effortThinking: true },
+  "glm-5.2": { context: 1000000, max: 131072, toolStream: true, effortThinking: true },
   "glm-5.3": { context: 1000000, max: 128000, toolStream: true, effortThinking: true },
 };
 
@@ -265,12 +268,12 @@ function buildModel(
     id,
     name,
     reasoning: true,
-    ...(effortThinking ? { thinkingLevelMap: GLM_53_THINKING_LEVELS } : {}),
+    ...(effortThinking ? { thinkingLevelMap: REQUIRED_EFFORT_THINKING_LEVELS } : {}),
     input: ["text"],
     cost,
     contextWindow: effectiveContext,
     maxTokens: max,
-    compat: effortThinking ? GLM_53_COMPAT : toolStream ? ZAI_COMPAT_TOOL_STREAM : ZAI_COMPAT_BASE,
+    compat: effortThinking ? REQUIRED_EFFORT_COMPAT : toolStream ? ZAI_COMPAT_TOOL_STREAM : ZAI_COMPAT_BASE,
   };
 }
 

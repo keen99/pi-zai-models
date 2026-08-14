@@ -1,6 +1,6 @@
 {
   "name": "pi-zai-models",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "pi extension: register Z.AI models with correct limits and thinking controls, including GLM-5.3 Coding Plan support.",
   "keywords": [
     "pi-package",

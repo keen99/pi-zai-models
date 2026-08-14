@@ -40,9 +40,32 @@ format. GLM-5.3 uses `thinking: { type: "enabled" }` plus
 `xhigh` → `max`. Unsupported `off`, `minimal`, and `medium` levels are hidden
 and clamped to a supported level.
 
+**Temporary compatibility workaround:** As of 2026-08-14, Coding Plan requests
+for `glm-5.1` and `glm-5.2` return `model: "glm-5.3"` and reject disabled
+thinking. This extension applies GLM-5.3's mandatory-thinking configuration to
+those two IDs until Z.AI restores them or documents the aliases.
+
 Costs use live API metered prices when published so pi's per-turn tracking
 shows equivalent value (Coding Plan is subscription-billed, not metered).
 GLM-5.3 reports zero equivalent cost until Z.AI adds it to the pricing page.
+
+### Known upstream aliasing: GLM-5.1 and GLM-5.2
+
+Observed on the Coding Plan endpoint on 2026-08-14:
+
+- A request with `model: "glm-5.1"` returns `model: "glm-5.3"`.
+- A request with `model: "glm-5.2"` returns `model: "glm-5.3"`.
+- Sending disabled thinking through the legacy Coding Plan parameter returns
+  `400 This model always engages in thinking and cannot be disabled; please use
+  low, high, or max`.
+- Z.AI's Thinking Mode documentation still says GLM-5.1 and GLM-5.2 support
+  disabled thinking: <https://docs.z.ai/guides/capabilities/thinking-mode>.
+
+Until Z.AI resolves or documents this behavior, `CURATED` marks GLM-5.1 and
+GLM-5.2 with `effortThinking: true`. They therefore use the same request format
+and supported thinking levels as GLM-5.3. This prevents normal requests and
+pi's compaction summarization from sending disabled thinking. Remove those two
+flags if Z.AI restores the original models and API behavior.
 
 ### Two providers
 
