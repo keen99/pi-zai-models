@@ -1,7 +1,8 @@
 // pi-zai-models: dynamically register Z.AI (zai) provider models.
 //
 // Fetches:
-//   - model IDs / availability from Z.AI pricing page
+//   - model IDs / availability from Z.AI pricing page plus a small
+//     coding-plan allowlist for announced models not listed there yet
 //   - context/maxTokens from per-model docs (docs.z.ai/guides/llm/<id>.md)
 //   - pricing from docs.z.ai/guides/overview/pricing.md
 //
@@ -52,14 +53,42 @@ const SAFE_CONTEXT = 272000;
 // entry in the zai-1m provider. Uses parsed doc context, not pricing.
 const ONE_M_THRESHOLD = 272000;
 
-const ZAI_COMPAT_BASE = {
-  supportsDeveloperRole: false,
-  thinkingFormat: "zai" as const,
+type ThinkingLevelMap = Partial<Record<"off" | "minimal" | "low" | "medium" | "high" | "xhigh", string | null>>;
+
+type ZaiCompat = {
+  supportsDeveloperRole: false;
+  supportsReasoningEffort?: boolean;
+  thinkingFormat: "zai" | "deepseek";
+  zaiToolStream?: boolean;
 };
 
-const ZAI_COMPAT_TOOL_STREAM = {
+const ZAI_COMPAT_BASE: ZaiCompat = {
+  supportsDeveloperRole: false,
+  thinkingFormat: "zai",
+};
+
+const ZAI_COMPAT_TOOL_STREAM: ZaiCompat = {
   ...ZAI_COMPAT_BASE,
   zaiToolStream: true,
+};
+
+// GLM-5.3 changed Z.AI's request format. pi's "deepseek" compatibility mode
+// emits exactly the required thinking object plus reasoning_effort. Unsupported
+// pi levels are hidden; switching from "off" clamps upward to low.
+const GLM_53_COMPAT: ZaiCompat = {
+  supportsDeveloperRole: false,
+  supportsReasoningEffort: true,
+  thinkingFormat: "deepseek",
+  zaiToolStream: true,
+};
+
+const GLM_53_THINKING_LEVELS: ThinkingLevelMap = {
+  off: null,
+  minimal: null,
+  low: "low",
+  medium: null,
+  high: "high",
+  xhigh: "max",
 };
 
 const ZERO_COST = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
@@ -73,6 +102,7 @@ interface CuratedModel {
   context: number;
   max: number;
   toolStream: boolean;
+  effortThinking?: boolean;
 }
 
 const CURATED: Record<string, CuratedModel> = {
@@ -84,6 +114,7 @@ const CURATED: Record<string, CuratedModel> = {
   "glm-5-turbo": { context: 200000, max: 131072, toolStream: true },
   "glm-5.1": { context: 200000, max: 131072, toolStream: true },
   "glm-5.2": { context: 1000000, max: 131072, toolStream: true },
+  "glm-5.3": { context: 1000000, max: 128000, toolStream: true, effortThinking: true },
 };
 
 // API token prices per 1M tokens. Parsed from pricing.md, curated fallback below.
@@ -201,11 +232,12 @@ interface BuiltModel {
   id: string;
   name: string;
   reasoning: boolean;
+  thinkingLevelMap?: ThinkingLevelMap;
   input: ("text" | "image")[];
   cost: typeof ZERO_COST;
   contextWindow: number;
   maxTokens: number;
-  compat: typeof ZAI_COMPAT_BASE;
+  compat: ZaiCompat;
 }
 
 function buildModel(
@@ -213,6 +245,7 @@ function buildModel(
   context: number,
   max: number,
   toolStream: boolean,
+  effortThinking: boolean,
   apiPrice: { input: number; output: number; cacheRead: number } | undefined,
   contextCap?: number,
 ): BuiltModel {
@@ -232,11 +265,12 @@ function buildModel(
     id,
     name,
     reasoning: true,
+    ...(effortThinking ? { thinkingLevelMap: GLM_53_THINKING_LEVELS } : {}),
     input: ["text"],
     cost,
     contextWindow: effectiveContext,
     maxTokens: max,
-    compat: toolStream ? ZAI_COMPAT_TOOL_STREAM : ZAI_COMPAT_BASE,
+    compat: effortThinking ? GLM_53_COMPAT : toolStream ? ZAI_COMPAT_TOOL_STREAM : ZAI_COMPAT_BASE,
   };
 }
 
@@ -256,6 +290,7 @@ interface ModelData {
   context: number;
   max: number;
   toolStream: boolean;
+  effortThinking: boolean;
   oneM: boolean;
   apiPrice?: { input: number; output: number; cacheRead: number };
 }
@@ -278,6 +313,7 @@ function collectModelData(
       context,
       max,
       toolStream,
+      effortThinking: cur?.effortThinking ?? false,
       oneM: context > ONE_M_THRESHOLD,
       apiPrice,
     };
@@ -285,13 +321,13 @@ function collectModelData(
 }
 
 function buildSafeModels(data: ModelData[]): BuiltModel[] {
-  return data.map((m) => buildModel(m.id, m.context, m.max, m.toolStream, m.apiPrice, SAFE_CONTEXT));
+  return data.map((m) => buildModel(m.id, m.context, m.max, m.toolStream, m.effortThinking, m.apiPrice, SAFE_CONTEXT));
 }
 
 function buildOneMModels(data: ModelData[]): BuiltModel[] {
   return data
     .filter((m) => m.oneM)
-    .map((m) => buildModel(m.id, m.context, m.max, m.toolStream, m.apiPrice));
+    .map((m) => buildModel(m.id, m.context, m.max, m.toolStream, m.effortThinking, m.apiPrice));
 }
 
 // =============================================================================
@@ -331,13 +367,17 @@ async function fetchFresh(timeoutMs: number): Promise<{ safe: BuiltModel[]; oneM
 // Filter
 // =============================================================================
 
+// Models confirmed in Coding Plan but not yet present on Z.AI's pricing page.
+// Keep this small: pricing remains the general availability source.
+const CODING_PLAN_ALLOW = new Set(["glm-5.3"]);
+
 // Models confirmed NOT in Coding Plan (429 access denied).
 const CODING_PLAN_DENY = new Set(["glm-5v-turbo"]);
 
 // Coding-plan models only: no ocr, 32b, X variants.
 // Vision (v) kept — some work, some 429'd handled by deny set.
 function codingModelIds(pricing: Record<string, any>): string[] {
-  return Object.keys(pricing).filter((id) => {
+  return Array.from(new Set([...Object.keys(pricing), ...CODING_PLAN_ALLOW])).filter((id) => {
     if (!id.startsWith("glm")) return false;
     if (id.includes("ocr")) return false;
     if (id.includes("32b")) return false;

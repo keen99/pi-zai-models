@@ -1,13 +1,14 @@
 {
   "name": "pi-zai-models",
-  "version": "1.0.0",
-  "description": "pi extension: register Z.AI (zai) provider models with correct context/maxTokens, including glm-5.2 (1M/128K) that upstream pi-ai omits.",
+  "version": "1.1.0",
+  "description": "pi extension: register Z.AI models with correct limits and thinking controls, including GLM-5.3 Coding Plan support.",
   "keywords": [
     "pi-package",
     "pi-extension",
     "zai",
     "glm",
     "glm-5.2",
+    "glm-5.3",
     "models",
     "context-window",
     "provider"

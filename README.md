@@ -1,18 +1,20 @@
 # pi-zai-models
 
 pi extension that dynamically registers Z.AI (`zai`) provider models with
-correct **context window**, **max output tokens**, and **API pricing** ---
-including **GLM-5.2** which upstream `pi-ai` does not ship.
+correct **context window**, **max output tokens**, **thinking controls**, and
+**API pricing** --- including **GLM-5.3** before Z.AI's pricing page and
+upstream `pi-ai` list it.
 
 ## Why
 
-Z.AI released GLM-5.2 on 2026-06-13 with a solid **1M-token context** and
-**128K max output**. Weeks later, `@earendil-works/pi-ai` (the model registry
-`pi` ships with) still has no `glm-5.2` entry at all, and some GLM-5.x limits
-are stale. `pi` is slow to adopt new Z.AI models.
+Z.AI released GLM-5.3 on 2026-08-14 for Coding Plan users with a **1M-token
+context** and **128K max output**. Its general API is still marked "coming
+soon," and Z.AI's pricing page does not list it yet. GLM-5.3 also changed the
+thinking API: thinking is mandatory and effort must be `low`, `high`, or `max`.
 
-This extension fixes that by fetching the live model list and limits from
-Z.AI's own docs, then calling `pi.registerProvider("zai", { models })`.
+This extension fixes that by combining Z.AI's live pricing list with a small
+allowlist for announced Coding Plan models, fetching limits from Z.AI's model
+docs, then calling `pi.registerProvider("zai", { models })`.
 `registerProvider` with `models` **replaces** the provider's entire model list,
 so this file is the single source of truth for the `zai` provider on your pi
 installs.
@@ -22,17 +24,25 @@ installs.
 On load:
 
 1. **Fetches** the Z.AI pricing page (`docs.z.ai/guides/overview/pricing.md`)
-   --- model IDs + per-1M-token prices. No auth needed.
+   --- model IDs + per-1M-token prices. Announced Coding Plan models missing
+   from that page (currently GLM-5.3) come from a curated allowlist. No auth
+   needed.
 2. **Fetches** each model's doc page (`docs.z.ai/guides/llm/<id>.md`) ---
    context window + max output tokens.
 3. **Parses** both, filters to coding-plan text models (drops ocr/32b/X
    variants, and `glm-5v-turbo` which 429s), and registers two providers.
 
 All models use the coding endpoint
-(`https://api.z.ai/api/coding/paas/v4`), Z.AI `thinkingFormat`, and
-`zaiToolStream` (streaming tool-call deltas) for 4.7+ models. Costs are
-populated with real API metered prices so pi's per-turn cost tracking shows
-equivalent value (Coding Plan is subscription-billed, not metered).
+(`https://api.z.ai/api/coding/paas/v4`) and `zaiToolStream` (streaming
+tool-call deltas) for 4.7+ models. Legacy models use Z.AI's `enable_thinking`
+format. GLM-5.3 uses `thinking: { type: "enabled" }` plus
+`reasoning_effort`; pi levels map as `low` → `low`, `high` → `high`, and
+`xhigh` → `max`. Unsupported `off`, `minimal`, and `medium` levels are hidden
+and clamped to a supported level.
+
+Costs use live API metered prices when published so pi's per-turn tracking
+shows equivalent value (Coding Plan is subscription-billed, not metered).
+GLM-5.3 reports zero equivalent cost until Z.AI adds it to the pricing page.
 
 ### Two providers
 
@@ -43,14 +53,14 @@ equivalent value (Coding Plan is subscription-billed, not metered).
 | `zai`     | all coding models   | capped to 272K  | default --- model-switch friendly |
 | `zai-1m`  | 1M-capable only     | full 1M                | opt-in for long-context work |
 
-Both send the real Z.AI model id (e.g. `glm-5.2`) to the API. The `[1m]`
+Both send the real Z.AI model id (e.g. `glm-5.3`) to the API. The `[1m]`
 suffix is a Claude Code client-side convention only --- Z.AI rejects it on both
 OpenAI and Anthropic endpoints, so this extension uses a separate provider
 instead of a suffix alias.
 
 **Why 272K safe default?** Aligned with pi's `gpt-5.5` context window.
 Prevents context overflow when switching models or during compaction recovery
-(pi cannot safely compact 1M → 272K with a smaller context model). Use `zai-1m/glm-5.2` only when you
+(pi cannot safely compact 1M → 272K with a smaller context model). Use `zai-1m/glm-5.3` only when you
 intentionally want 1M context.
 
 ## Caching
@@ -150,7 +160,7 @@ Safe default in `settings.json`:
 ```json
 {
   "defaultProvider": "zai",
-  "defaultModel": "glm-5.2"
+  "defaultModel": "glm-5.3"
 }
 ```
 
@@ -159,7 +169,7 @@ Opt into 1M only when needed:
 ```json
 {
   "defaultProvider": "zai-1m",
-  "defaultModel": "glm-5.2"
+  "defaultModel": "glm-5.3"
 }
 ```
 
@@ -171,11 +181,11 @@ Limits and pricing come from official Z.AI docs, fetched live:
 - Per-model limits: <https://docs.z.ai/guides/llm/<model-id>>
 
 When Z.AI ships a new model, it appears automatically once it hits the pricing
-page (no code change needed). The hardcoded `CURATED` table in `index.ts` is
-only a cold-start fallback --- update it if a model lacks a doc page with
-parseable limits.
+page. If Coding Plan gets it first, add it to `CODING_PLAN_ALLOW`. The hardcoded
+`CURATED` table supplies cold-start limits and model-specific API behavior;
+update it for new request-format changes or docs without parseable limits.
 
-When upstream `pi-ai` finally adds `glm-5.2`, this extension still wins (later
+When upstream `pi-ai` adds these models, this extension still wins (later
 registration overrides), so nothing breaks --- you can uninstall it once upstream
 catches up.
 

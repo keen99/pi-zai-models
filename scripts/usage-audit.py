@@ -49,7 +49,7 @@ PROMO_OFFPEAK_1X = (os.environ.get("ZAI_PROMO_OFFPEAK_1X", "1") not in ("0", "fa
 SESSIONS = os.path.expanduser(ARGS.sessions_dir)
 
 ZAI_MODELS = {
-    "glm-5.2", "glm-5.2[1m]", "glm-5.1", "glm-5-turbo", "glm-5v-turbo", "glm-5",
+    "glm-5.3", "glm-5.2", "glm-5.2[1m]", "glm-5.1", "glm-5-turbo", "glm-5v-turbo", "glm-5",
     "glm-4.7", "glm-4.7-flash", "glm-4.7-flashx", "glm-4.6", "glm-4.6v",
     "glm-4.6v-flash", "glm-4.5", "glm-4.5-air", "glm-4.5v",
 }
@@ -138,7 +138,10 @@ def usage_total(parts):
 
 
 def api_equiv_cost(model, parts):
-    price = API_PRICES.get(model) or API_PRICES.get(model.replace("[1m]", "")) or API_PRICES["glm-5.2"]
+    # Do not guess prices for newly released models missing from Z.AI's pricing page.
+    price = API_PRICES.get(model) or API_PRICES.get(model.replace("[1m]", ""))
+    if price is None:
+        return 0.0
     pin, pout, pcache = price
     return (
         parts["input"] * pin
@@ -177,7 +180,7 @@ def load():
                     elif msg.get("role") == "assistant":
                         model = msg.get("model") or cur_model
                         provider = msg.get("provider")
-                        if model in ZAI_MODELS or provider == "zai":
+                        if model in ZAI_MODELS or provider in ("zai", "zai-1m"):
                             assistant.append((dt, model or "?", usage_parts(msg)))
         except Exception:
             continue
@@ -340,6 +343,7 @@ def print_api_pricing():
         print(f"{model:<16} ${pin:<5.2f}  ${pout:<5.2f}  ${pcache:<8.2f} free/ignored")
     print("\nFormula: (input*input_price + output*output_price + cacheRead*cacheRead_price) / 1,000,000")
     print("Coding Plan is subscription quota, not API billing. API$ = equivalent value yardstick.")
+    print("Models absent from public pricing (currently GLM-5.3) contribute $0 until pricing is published.")
 
 
 def print_api_value(promo):
