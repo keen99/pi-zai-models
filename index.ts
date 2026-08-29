@@ -3,7 +3,9 @@
 // Fetches:
 //   - model IDs / availability from Z.AI pricing page plus a small
 //     coding-plan allowlist for announced models not listed there yet
-//   - context/maxTokens from per-model docs (docs.z.ai/guides/llm/<id>.md)
+//   - context/maxTokens/input-modality from per-model docs
+//     (docs.z.ai/guides/llm/<id>.md for text models, guides/vlm/<id>.md for
+//     multimodal ones like glm-5.3-flash)
 //   - pricing from docs.z.ai/guides/overview/pricing.md
 //
 // Falls back to curated static list if fetch/parse fails. Cache-first on startup
@@ -32,7 +34,12 @@ import * as path from "node:path";
 
 const BASE_URL = "https://api.z.ai/api/coding/paas/v4";
 const PRICING_MD = "https://docs.z.ai/guides/overview/pricing.md";
-const MODEL_DOC = (id: string) => `https://docs.z.ai/guides/llm/${id}.md`;
+// Model docs live under guides/llm/ (text models) or guides/vlm/ (multimodal
+// models, e.g. glm-5.3-flash). Try both paths.
+const MODEL_DOC_PATHS = (id: string) => [
+  `https://docs.z.ai/guides/llm/${id}.md`,
+  `https://docs.z.ai/guides/vlm/${id}.md`,
+];
 
 const CACHE_DIR = process.env.XDG_CACHE_HOME
   ? path.join(process.env.XDG_CACHE_HOME, "pi-zai-models")
@@ -105,6 +112,7 @@ interface CuratedModel {
   max: number;
   toolStream: boolean;
   effortThinking?: boolean;
+  image?: boolean;
 }
 
 const CURATED: Record<string, CuratedModel> = {
@@ -118,10 +126,14 @@ const CURATED: Record<string, CuratedModel> = {
   "glm-5.1": { context: 200000, max: 131072, toolStream: true, effortThinking: true },
   "glm-5.2": { context: 1000000, max: 131072, toolStream: true, effortThinking: true },
   "glm-5.3": { context: 1000000, max: 128000, toolStream: true, effortThinking: true },
+  // First native-multimodal GLM: image input, 1M context, 128K max output.
+  "glm-5.3-flash": { context: 1000000, max: 128000, toolStream: true, effortThinking: true, image: true },
 };
 
 // API token prices per 1M tokens. Parsed from pricing.md, curated fallback below.
 const CURATED_PRICING: Record<string, { input: number; output: number; cacheRead: number }> = {
+  // 50% promo prices through 2026-09-09 24:00 UTC+8; list prices 0.15/0.5/0.03.
+  "glm-5.3-flash": { input: 0.075, output: 0.25, cacheRead: 0.015 },
   "glm-5.2": { input: 1.4, output: 4.4, cacheRead: 0.26 },
   "glm-5.1": { input: 1.4, output: 4.4, cacheRead: 0.26 },
   "glm-5": { input: 1.0, output: 3.2, cacheRead: 0.2 },
@@ -180,7 +192,9 @@ async function fetchWithTimeout(url: string, timeoutMs: number): Promise<string 
 function parsePricing(md: string): Record<string, { input: number; output: number; cacheRead: number }> | null {
   const out: Record<string, { input: number; output: number; cacheRead: number }> = {};
   const price = (s: string): number => {
-    const m = s.replace(/\\/g, "").replace(/\$/g, "").trim();
+    // Strip markdown strikethrough promo prices (~~$0.15~~ $0.075) so the
+    // current non-struck price parses.
+    const m = s.replace(/\\/g, "").replace(/\$/g, "").replace(/~~[\s\S]*?~~/g, "").trim();
     if (m.toLowerCase() === "free") return 0;
     const n = parseFloat(m);
     return isNaN(n) ? -1 : n;
@@ -199,14 +213,15 @@ function parsePricing(md: string): Record<string, { input: number; output: numbe
   return Object.keys(out).length ? out : null;
 }
 
-// Parse context + maxTokens from model doc markdown.
-function parseModelLimits(md: string): { context: number; max: number } | null {
+// Parse context + maxTokens + image-input support from model doc markdown.
+function parseModelLimits(md: string): { context: number; max: number; image: boolean } | null {
   const ctx = extractAfter(md, "Context Length");
   const max = extractAfter(md, "Maximum Output Tokens");
+  const inputModality = extractAfter(md, "Input Modality");
   const context = toTokens(ctx);
   const maxTokens = toTokens(max);
   if (!context || !maxTokens) return null;
-  return { context, max: maxTokens };
+  return { context, max: maxTokens, image: /image/i.test(inputModality ?? "") };
 }
 
 function extractAfter(md: string, label: string): string | null {
@@ -249,6 +264,7 @@ function buildModel(
   max: number,
   toolStream: boolean,
   effortThinking: boolean,
+  image: boolean,
   apiPrice: { input: number; output: number; cacheRead: number } | undefined,
   contextCap?: number,
 ): BuiltModel {
@@ -269,7 +285,7 @@ function buildModel(
     name,
     reasoning: true,
     ...(effortThinking ? { thinkingLevelMap: REQUIRED_EFFORT_THINKING_LEVELS } : {}),
-    input: ["text"],
+    input: image ? ["text", "image"] : ["text"],
     cost,
     contextWindow: effectiveContext,
     maxTokens: max,
@@ -294,6 +310,7 @@ interface ModelData {
   max: number;
   toolStream: boolean;
   effortThinking: boolean;
+  image: boolean;
   oneM: boolean;
   apiPrice?: { input: number; output: number; cacheRead: number };
 }
@@ -301,7 +318,7 @@ interface ModelData {
 function collectModelData(
   ids: string[],
   pricing: Record<string, any> | null,
-  limitsCache: Record<string, { context: number; max: number }>,
+  limitsCache: Record<string, { context: number; max: number; image?: boolean }>,
 ): ModelData[] {
   return ids.map((id) => {
     const cached = limitsCache[id];
@@ -317,6 +334,7 @@ function collectModelData(
       max,
       toolStream,
       effortThinking: cur?.effortThinking ?? false,
+      image: cached?.image ?? cur?.image ?? false,
       oneM: context > ONE_M_THRESHOLD,
       apiPrice,
     };
@@ -324,25 +342,29 @@ function collectModelData(
 }
 
 function buildSafeModels(data: ModelData[]): BuiltModel[] {
-  return data.map((m) => buildModel(m.id, m.context, m.max, m.toolStream, m.effortThinking, m.apiPrice, SAFE_CONTEXT));
+  return data.map((m) => buildModel(m.id, m.context, m.max, m.toolStream, m.effortThinking, m.image, m.apiPrice, SAFE_CONTEXT));
 }
 
 function buildOneMModels(data: ModelData[]): BuiltModel[] {
   return data
     .filter((m) => m.oneM)
-    .map((m) => buildModel(m.id, m.context, m.max, m.toolStream, m.effortThinking, m.apiPrice));
+    .map((m) => buildModel(m.id, m.context, m.max, m.toolStream, m.effortThinking, m.image, m.apiPrice));
 }
 
 // =============================================================================
 // Fetch orchestration
 // =============================================================================
 
-async function fetchLimitsForIds(ids: string[], timeoutMs: number): Promise<Record<string, { context: number; max: number }>> {
-  const out: Record<string, { context: number; max: number }> = {};
+async function fetchLimitsForIds(ids: string[], timeoutMs: number): Promise<Record<string, { context: number; max: number; image: boolean }>> {
+  const out: Record<string, { context: number; max: number; image: boolean }> = {};
   await Promise.all(
     ids.map(async (id) => {
       if (!id.startsWith("glm")) return;
-      const md = await fetchWithTimeout(MODEL_DOC(id), timeoutMs);
+      let md: string | null = null;
+      for (const url of MODEL_DOC_PATHS(id)) {
+        md = await fetchWithTimeout(url, timeoutMs);
+        if (md) break;
+      }
       if (!md) return;
       const parsed = parseModelLimits(md);
       if (parsed) out[id] = parsed;

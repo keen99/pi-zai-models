@@ -8,8 +8,10 @@ upstream `pi-ai` list it.
 ## Why
 
 Z.AI released GLM-5.3 on 2026-08-14 for Coding Plan users with a **1M-token
-context** and **128K max output**. Its general API is still marked "coming
-soon," and Z.AI's pricing page does not list it yet. GLM-5.3 also changed the
+context** and **128K max output**. GLM-5.3-Flash followed on 2026-08-26 — the
+first **native multimodal** GLM (image input), 1M context, 128K output, at
+Flash-tier pricing. GLM-5.3's general API is still marked "coming soon,"
+and Z.AI's pricing page does not list it yet. Both also changed the
 thinking API: thinking is mandatory and effort must be `low`, `high`, or `max`.
 
 This extension fixes that by combining Z.AI's live pricing list with a small
@@ -24,21 +26,37 @@ installs.
 On load:
 
 1. **Fetches** the Z.AI pricing page (`docs.z.ai/guides/overview/pricing.md`)
-   --- model IDs + per-1M-token prices. Announced Coding Plan models missing
+   --- model IDs + per-1M-token prices (markdown strikethrough promo prices are
+   handled). Announced Coding Plan models missing
    from that page (currently GLM-5.3) come from a curated allowlist. No auth
    needed.
-2. **Fetches** each model's doc page (`docs.z.ai/guides/llm/<id>.md`) ---
-   context window + max output tokens.
+2. **Fetches** each model's doc page (`docs.z.ai/guides/llm/<id>.md`, falling
+   back to `docs.z.ai/guides/vlm/<id>.md` for multimodal models like
+   GLM-5.3-Flash) --- context window, max output tokens, and whether the model
+   accepts image input (Input Modality card contains "Image").
 3. **Parses** both, filters to coding-plan text models (drops ocr/32b/X
    variants, and `glm-5v-turbo` which 429s), and registers two providers.
 
 All models use the coding endpoint
 (`https://api.z.ai/api/coding/paas/v4`) and `zaiToolStream` (streaming
 tool-call deltas) for 4.7+ models. Legacy models use Z.AI's `enable_thinking`
-format. GLM-5.3 uses `thinking: { type: "enabled" }` plus
+format. GLM-5.3 and GLM-5.3-Flash use `thinking: { type: "enabled" }` plus
 `reasoning_effort`; pi levels map as `low` → `low`, `high` → `high`, and
 `xhigh` → `max`. Unsupported `off`, `minimal`, and `medium` levels are hidden
 and clamped to a supported level.
+
+### GLM-5.3-Flash: native multimodal
+
+GLM-5.3-Flash is the first GLM-5-series model with native image input, so it
+is registered with `input: ["text", "image"]` — pi attaches screenshots
+natively and the model reads them directly (no `zai_vision_*` detour; see
+[pi-zai-tools-gate](https://github.com/keen99/pi-zai-tools-gate)). Video and
+file inputs exist on the API but pi attachments are image-only, so they are
+not advertised. Its 1M context gives it entries in both providers (`zai` safe
+cap 272K, `zai-1m` full). Pricing uses the current 50%-off promo
+($0.075 input / $0.25 output / $0.015 cached per 1M) — the pricing page
+carries strikethrough list prices ($0.15/$0.50/$0.03) which the parser strips;
+after the promo ends 2026-09-09 the plain list prices parse instead.
 
 **Temporary compatibility workaround:** As of 2026-08-14, Coding Plan requests
 for `glm-5.1` and `glm-5.2` return `model: "glm-5.3"` and reject disabled
@@ -111,14 +129,12 @@ Cache location honors `$XDG_CACHE_HOME`.
 
 Current Z.AI docs: <https://docs.z.ai/devpack/overview#usage-instruction>
 
-- One prompt = one query.
-- Each prompt is estimated to invoke the model 15--20 times.
-- 5-hour and weekly limits are estimates; actual usage varies with project
-  complexity, repository size, and auto-accept.
-- Current caps: Lite ~80/5hr + ~400/week, Pro ~400/5hr + ~2,000/week, Max
-  ~1,600/5hr + ~8,000/week.
-- GLM-5.2 and GLM-5-Turbo consume 3× quota during peak, 2× off-peak; off-peak
-  1× promo runs through end of September.
+- New Coding Plan uses a points-based quota system with transparent usage
+  limits. Off-peak hours (including all day weekends) consume only 50% of
+  standard points.
+- GLM-5.3-Flash gets 3× the available quota compared with GLM-5.3.
+- One prompt is still estimated to invoke the model 15--20 times; 5-hour and
+  weekly limits are estimates and vary with project complexity.
 
 Legacy reference (archived 2026-01-06):
 <https://web.archive.org/web/20260106170952/https://z.ai/subscribe>
@@ -174,7 +190,8 @@ pi --list-models | grep zai
 ```
 
 Should show all coding-plan models under `zai`, plus 1M-capable models under
-`zai-1m`. Real API calls should work for every listed model.
+`zai-1m`. `pi --list-models` shows GLM-5.3-Flash with image input. Real API
+calls should work for every listed model.
 
 ## Defaults
 
