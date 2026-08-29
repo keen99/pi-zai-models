@@ -62,6 +62,24 @@ CURRENT = {
 }
 LEGACY_5H = {"Lite": 120, "Pro": 600, "Max": 2400}
 
+# V3 credits-based plan (2026-07-30+). Monthly prices from z.ai/subscribe
+# snapshot 2026-08-29; yearly billing is -30%. Caps from docs.z.ai/devpack/overview.
+GEN3_UPDATED = "2026-08-29"
+GEN3 = {
+    "Lite": {"price": 18, "5h": 2_000, "week": 10_000},
+    "Pro": {"price": 80, "5h": 12_000, "week": 60_000},
+    "Max": {"price": 168, "5h": 28_000, "week": 140_000},
+}
+
+# V3 credit multipliers per 10k tokens: (input, cachedInput, output).
+# Source: docs.z.ai/devpack/overview#usage-instruction
+GEN3_MULT = {
+    "glm-5.3": (6.9, 1.7, 24.0),
+    "glm-5.3-flash": (2.3, 0.56, 8.0),
+}
+GEN3_MCP_CREDIT_PER_CALL = 1.2  # web search / web reader / zread; not modeled from sessions
+GEN3_UPDATED_NOTE = "V3 estimates assume documented routing: GLM-5.2/5.1 -> GLM-5.3, GLM-4.7 -> GLM-5.3-Flash; other legacy ids billed at flagship rates. MCP tool calls (1.2 credits each) not modeled."
+
 # Z.AI API pricing per 1M tokens (input, output, cacheRead).
 # Source: https://docs.z.ai/guides/overview/pricing
 # Snapshot verified: 2026-07-08. Cache write ignored because Z.AI currently lists
@@ -96,6 +114,74 @@ def quota_cost(model, dt, promo):
             return 3
         return 1 if promo else 2
     return 1
+
+
+def gen3_route(model):
+    """Map a recorded model id to its V3 billing model. Docs: GLM-5.2/5.1
+    requests route to GLM-5.3; GLM-4.7 routes to GLM-5.3-Flash. Other legacy
+    ids are credited at flagship rates (conservative)."""
+    n = model.lower().replace("[1m]", "")
+    if n.startswith("glm-4.7"):
+        return "glm-5.3-flash"
+    return "glm-5.3"
+
+
+def gen3_credits(model, parts, dt):
+    """V3 credits for one model call. Off-peak bills at 50% (all models)."""
+    pin, pcache, pout = GEN3_MULT[gen3_route(model)]
+    raw = (
+        parts["input"] * pin
+        + parts["cacheRead"] * pcache
+        + parts["output"] * pout
+    ) / 10_000
+    return raw * (0.5 if not is_peak(dt) else 1.0)
+
+
+def summarize_credits(assistant):
+    """V3 credit accounting from per-message token usage (exact, not prompt-count)."""
+    daily = defaultdict(lambda: {"peak5h": 0.0, "credits": 0.0})
+    weekly = defaultdict(float)
+    monthly = defaultdict(float)
+    total = 0.0
+    q = deque()
+    rolling = 0.0
+    for dt, model, parts in assistant:
+        c = gen3_credits(model, parts, dt)
+        daily[day(dt)]["credits"] += c
+        weekly[week(dt)] += c
+        monthly[dt.strftime("%Y-%m")] += c
+        total += c
+        q.append((dt, c))
+        rolling += c
+        cutoff = dt - timedelta(hours=5)
+        while q and q[0][0] <= cutoff:
+            _, old = q.popleft()
+            rolling -= old
+        daily[day(dt)]["peak5h"] = max(daily[day(dt)]["peak5h"], rolling)
+    return {"daily": daily, "weekly": weekly, "monthly": monthly, "total": total}
+
+
+def print_gen3_summary(credits):
+    print(f"\nV3 credits plan (snapshot {GEN3_UPDATED}) — would your history fit?")
+    print("Tier   result       worst 5h            worst week           price")
+    print("----   ------       -----------------   -----------------   ----------")
+    max5 = max((d["peak5h"] for d in credits["daily"].values()), default=0.0)
+    maxw = max(credits["weekly"].values(), default=0.0)
+    for tier, cap in GEN3.items():
+        bad5 = sum(1 for d in credits["daily"].values() if d["peak5h"] > cap["5h"])
+        badw = sum(1 for w in credits["weekly"].values() if w > cap["week"])
+        result = "FAIL" if bad5 or badw else "ok"
+        meaning = []
+        if bad5:
+            meaning.append(f"5h failed {bad5}/{len(credits['daily'])} days")
+        if badw:
+            meaning.append(f"week failed {badw}/{len(credits['weekly'])} weeks")
+        if not meaning:
+            meaning.append("no cap hits")
+        print(
+            f"{tier:<5}  {result:<10}   {max5:>7.0f}/{cap['5h']:<8}   {maxw:>7.0f}/{cap['week']:<8}   ${cap['price']}/mo (yr ${cap['price']*0.7:g}/mo)   {', '.join(meaning)}"
+        )
+    print(f"\n{GEN3_UPDATED_NOTE}")
 
 
 def day(dt): return dt.strftime("%Y-%m-%d")
@@ -409,6 +495,11 @@ def main():
     print(f"Peak/off-peak prompts:   {promo['peak']:,}/{promo['off']:,}")
     print(f"Sessions scanned:        {len(files)}")
 
+    credits = summarize_credits(assistant)
+    per_prompt = credits["total"] / p if p else 0
+    print(f"\nV3 credits (exact from token usage): {credits['total']:,.0f}  ({per_prompt:,.1f}/prompt avg)")
+    print_gen3_summary(credits)
+
     print_tier_summary("Current plans — through September promo", promo, CURRENT)
     print_tier_summary("Current plans — after September promo ends", after_sep, CURRENT)
     print_legacy_summary(promo)
@@ -427,6 +518,8 @@ def main():
     print("Visible queries are pi user messages routed to Z.AI. Provider-side billing may differ.")
     print("API-equivalent cost uses Z.AI public token prices against pi usage records.")
     print("Z.AI caps are quota/query based, but hidden throttles may consider token/complexity pressure.")
+    print("V3 credit formula: (input*inMult + cachedInput*cacheMult + output*outMult)/10000; off-peak (outside Mon-Fri 14:00-18:00 UTC+8) bills at 50%.")
+    print("V3 caps: Lite 2k/5h + 10k/wk, Pro 12k/60k, Max 28k/140k. Monthly prices 18/80/168; yearly -30%.")
     print("Docs: https://docs.z.ai/devpack/overview#usage-instruction")
     print("Legacy archive: https://web.archive.org/web/20260106170952/https://z.ai/subscribe")
 
