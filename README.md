@@ -1,5 +1,8 @@
 # pi-zai-models
 
+![release-watch](https://github.com/keen99/pi-zai-models/actions/workflows/release-watch.yml/badge.svg)
+[![pi tested](https://img.shields.io/github/v/release/keen99/pi-zai-models?label=pi%20tested%200.75.0%20%E2%86%92)](https://github.com/keen99/pi-zai-models/releases)
+
 pi extension that dynamically registers Z.AI (`zai`) provider models with
 correct **context window**, **max output tokens**, **thinking controls**, and
 **API pricing** --- including **GLM-5.3** before Z.AI's pricing page and
@@ -234,6 +237,30 @@ catches up.
 - pi `>= 0.75.4` (uses `registerProvider`, available since the extension API
   stabilized).
 - Requires `@earendil-works/pi-coding-agent` as a peer (provided by pi itself).
+
+## Development
+
+```sh
+npm run check       # typecheck + 15 unit tests (parsers, builders, cache paths, fetch stubbing)
+npm run test:matrix # deep smoke on every published pi release >= 0.75.0
+```
+
+Unit tests cover the pure surface: pricing-table parsing (strikethrough
+promo prices, free tier, invalid rows), model-doc limit parsing (K/M
+token units, input modality), coding-plan filtering (allowlist,
+denylist, variant pruning), model building (272K safe cap with name
+suffix, per-1M cost division, compat matrix: effort thinking /
+tool-stream / base), and the extension closure with stubbed fetch:
+warm-cache fast path (zero fetches), cold-start fallback to the
+curated list, cold-start with successful fetch driving caches, and
+stale-cache background refresh. The matrix boots each pinned pi
+release in RPC mode with a seeded cache and stubbed fetch, asserting
+both providers register on the real process. Cached pi installs live
+in `.matrix-cache/` and are reused across runs.
+
+`ZAI_MODELS_DEBUG=1` writes a registration marker (provider model
+counts); `PI_TEST_BIN` overrides the pi binary in the smoke. Tests are
+hermetic — cache lives in a temp `XDG_CACHE_HOME`, network is stubbed.
 
 ## License
 

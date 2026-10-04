@@ -189,7 +189,7 @@ async function fetchWithTimeout(url: string, timeoutMs: number): Promise<string 
 // =============================================================================
 
 // Parse pricing markdown table. Returns map keyed by lowercased model name.
-function parsePricing(md: string): Record<string, { input: number; output: number; cacheRead: number }> | null {
+export function parsePricing(md: string): Record<string, { input: number; output: number; cacheRead: number }> | null {
   const out: Record<string, { input: number; output: number; cacheRead: number }> = {};
   const price = (s: string): number => {
     // Strip markdown strikethrough promo prices (~~$0.15~~ $0.075) so the
@@ -214,7 +214,7 @@ function parsePricing(md: string): Record<string, { input: number; output: numbe
 }
 
 // Parse context + maxTokens + image-input support from model doc markdown.
-function parseModelLimits(md: string): { context: number; max: number; image: boolean } | null {
+export function parseModelLimits(md: string): { context: number; max: number; image: boolean } | null {
   const ctx = extractAfter(md, "Context Length");
   const max = extractAfter(md, "Maximum Output Tokens");
   const inputModality = extractAfter(md, "Input Modality");
@@ -230,7 +230,7 @@ function extractAfter(md: string, label: string): string | null {
   return m ? m[1].trim() : null;
 }
 
-function toTokens(s: string | null): number {
+export function toTokens(s: string | null): number {
   if (!s) return 0;
   s = s.trim();
   const m = s.match(/^(\d+(?:\.\d+)?)\s*([KMkM]?)/);
@@ -258,7 +258,7 @@ interface BuiltModel {
   compat: ZaiCompat;
 }
 
-function buildModel(
+export function buildModel(
   id: string,
   context: number,
   max: number,
@@ -293,7 +293,7 @@ function buildModel(
   };
 }
 
-function prettyName(id: string): string {
+export function prettyName(id: string): string {
   return id
     .split(/[\-_.]/)
     .map((p) => p.toUpperCase())
@@ -315,7 +315,7 @@ interface ModelData {
   apiPrice?: { input: number; output: number; cacheRead: number };
 }
 
-function collectModelData(
+export function collectModelData(
   ids: string[],
   pricing: Record<string, any> | null,
   limitsCache: Record<string, { context: number; max: number; image?: boolean }>,
@@ -341,11 +341,11 @@ function collectModelData(
   });
 }
 
-function buildSafeModels(data: ModelData[]): BuiltModel[] {
+export function buildSafeModels(data: ModelData[]): BuiltModel[] {
   return data.map((m) => buildModel(m.id, m.context, m.max, m.toolStream, m.effortThinking, m.image, m.apiPrice, SAFE_CONTEXT));
 }
 
-function buildOneMModels(data: ModelData[]): BuiltModel[] {
+export function buildOneMModels(data: ModelData[]): BuiltModel[] {
   return data
     .filter((m) => m.oneM)
     .map((m) => buildModel(m.id, m.context, m.max, m.toolStream, m.effortThinking, m.image, m.apiPrice));
@@ -401,7 +401,7 @@ const CODING_PLAN_DENY = new Set(["glm-5v-turbo"]);
 
 // Coding-plan models only: no ocr, 32b, X variants.
 // Vision (v) kept — some work, some 429'd handled by deny set.
-function codingModelIds(pricing: Record<string, any>): string[] {
+export function codingModelIds(pricing: Record<string, any>): string[] {
   return Array.from(new Set([...Object.keys(pricing), ...CODING_PLAN_ALLOW])).filter((id) => {
     if (!id.startsWith("glm")) return false;
     if (id.includes("ocr")) return false;
@@ -430,6 +430,17 @@ function register(pi: ExtensionAPI, safe: BuiltModel[], oneM: BuiltModel[]) {
   // Register zai first (sorts first in selectors), zai-1m after.
   registerProvider(pi, "zai", safe);
   registerProvider(pi, "zai-1m", oneM);
+
+  if (process.env.ZAI_MODELS_DEBUG === "1") {
+    try {
+      const agentDir = process.env.PI_CODING_AGENT_DIR || path.join(os.homedir(), ".pi", "agent");
+      fs.mkdirSync(agentDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(agentDir, "zai-models-loaded.json"),
+        JSON.stringify({ loaded: true, zai: safe.length, "zai-1m": oneM.length }) + "\n",
+      );
+    } catch { /* debug marker best-effort */ }
+  }
 }
 
 export default async function zaiModelsExtension(pi: ExtensionAPI) {
